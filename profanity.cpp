@@ -1,4 +1,4 @@
-THIS SHOULD BE A LINTER ERROR#include <algorithm>
+#include <algorithm>
 #include <stdexcept>
 #include <iostream>
 #include <fstream>
@@ -27,6 +27,8 @@ THIS SHOULD BE A LINTER ERROR#include <algorithm>
 #include "kernel_profanity.hpp"
 #include "kernel_sha256.hpp"
 #include "kernel_keccak.hpp"
+#include "cuda_utils.hpp"
+#include "CUDAMemory.hpp"
 
 std::string readFile(const char *const szFilename)
 {
@@ -245,129 +247,21 @@ int main(int argc, char **argv)
 		mode.prefixCount = prefixCount;
 		mode.suffixCount = suffixCount;
 
-		std::vector<cl_device_id> vFoundDevices = getAllDevices();
-		std::vector<cl_device_id> vDevices;
-		std::map<cl_device_id, size_t> mDeviceIndex;
+		// CUDA设备枚举与打印
+		printCUDADevices();
 
-		std::vector<std::string> vDeviceBinary;
-		std::vector<size_t> vDeviceBinarySize;
-		cl_int errorCode;
-		bool bUsedCache = false;
-
-		std::cout << "Devices:" << std::endl;
-		for (size_t i = 0; i < vFoundDevices.size(); ++i)
-		{
-			if (std::find(vDeviceSkipIndex.begin(), vDeviceSkipIndex.end(), i) != vDeviceSkipIndex.end())
-			{
-				continue;
-			}
-			cl_device_id &deviceId = vFoundDevices[i];
-			const auto strName = clGetWrapperString(clGetDeviceInfo, deviceId, CL_DEVICE_NAME);
-			const auto computeUnits = clGetWrapper<cl_uint>(clGetDeviceInfo, deviceId, CL_DEVICE_MAX_COMPUTE_UNITS);
-			const auto globalMemSize = clGetWrapper<cl_ulong>(clGetDeviceInfo, deviceId, CL_DEVICE_GLOBAL_MEM_SIZE);
-			bool precompiled = false;
-
-			if (!bNoCache)
-			{
-				std::ifstream fileIn(getDeviceCacheFilename(deviceId, inverseSize), std::ios::binary);
-				if (fileIn.is_open())
-				{
-					vDeviceBinary.push_back(std::string((std::istreambuf_iterator<char>(fileIn)), std::istreambuf_iterator<char>()));
-					vDeviceBinarySize.push_back(vDeviceBinary.back().size());
-					precompiled = true;
-				}
-			}
-
-			std::cout << "  GPU-" << i << ": " << strName << ", " << globalMemSize << " bytes available, " << computeUnits << " compute units (precompiled = " << (precompiled ? "yes" : "no") << ")" << std::endl;
-			vDevices.push_back(vFoundDevices[i]);
-			mDeviceIndex[vFoundDevices[i]] = i;
-		}
-
-		if (vDevices.empty())
-		{
-			return 1;
-		}
-
-		std::cout << std::endl;
-		std::cout << "OpenCL:" << std::endl;
-		std::cout << "  Context creating ..." << std::flush;
-		auto clContext = clCreateContext(NULL, vDevices.size(), vDevices.data(), NULL, NULL, &errorCode);
-		if (printResult(clContext, errorCode))
-		{
-			return 1;
-		}
-
-		cl_program clProgram;
-		if (vDeviceBinary.size() == vDevices.size())
-		{
-			// Create program from binaries
-			bUsedCache = true;
-
-			std::cout << "  Binary kernel loading..." << std::flush;
-			const unsigned char **pKernels = new const unsigned char *[vDevices.size()];
-			for (size_t i = 0; i < vDeviceBinary.size(); ++i)
-			{
-				pKernels[i] = reinterpret_cast<const unsigned char *>(vDeviceBinary[i].data());
-			}
-
-			cl_int *pStatus = new cl_int[vDevices.size()];
-
-			clProgram = clCreateProgramWithBinary(clContext, vDevices.size(), vDevices.data(), vDeviceBinarySize.data(), pKernels, pStatus, &errorCode);
-			if (printResult(clProgram, errorCode))
-			{
-				return 1;
-			}
-		}
-		else
-		{
-			// Create a program from the kernel source
-			std::cout << "  Kernel compiling ..." << std::flush;
-
-			// const std::string strKeccak = readFile("keccak.cl");
-			// const std::string strSha256 = readFile("sha256.cl");
-			// const std::string strVanity = readFile("profanity.cl");
-			// const char *szKernels[] = {strKeccak.c_str(), strSha256.c_str(), strVanity.c_str()};
-
-			const char *szKernels[] = {kernel_keccak.c_str(), kernel_sha256.c_str(), kernel_profanity.c_str()};
-			clProgram = clCreateProgramWithSource(clContext, sizeof(szKernels) / sizeof(char *), szKernels, NULL, &errorCode);
-			if (printResult(clProgram, errorCode))
-			{
-				return 1;
-			}
-		}
-
-		// Build the program
-		std::cout << "  Program building ..." << std::flush;
-		const std::string strBuildOptions = "-D PROFANITY_INVERSE_SIZE=" + toString(inverseSize) + " -D PROFANITY_MAX_SCORE=" + toString(PROFANITY_MAX_SCORE);
-		if (printResult(clBuildProgram(clProgram, vDevices.size(), vDevices.data(), strBuildOptions.c_str(), NULL, NULL)))
-		{
-			return 1;
-		}
-
-		// Save binary to improve future start times
-		if (!bUsedCache && !bNoCache)
-		{
-			std::cout << "  Program saving ..." << std::flush;
-			auto binaries = getBinaries(clProgram);
-			for (size_t i = 0; i < binaries.size(); ++i)
-			{
-				std::ofstream fileOut(getDeviceCacheFilename(vDevices[i], inverseSize), std::ios::binary);
-				fileOut.write(binaries[i].data(), binaries[i].size());
-			}
-			std::cout << "Done" << std::endl;
-		}
-
+		// CUDA内存分配和拷贝示例
+		CUDAMemory<int> testMem(10);
+		for (int i = 0; i < 10; ++i) testMem.hostData()[i] = i * 2;
+		testMem.copyHostToDevice();
+		// 这里可以调用CUDA kernel做运算，暂略
+		testMem.copyDeviceToHost();
+		std::cout << "CUDA内存拷贝回主机: ";
+		for (int i = 0; i < 10; ++i) std::cout << testMem.hostData()[i] << " ";
 		std::cout << std::endl;
 
-		Dispatcher d(clContext, clProgram, mode, worksizeMax == 0 ? inverseSize * inverseMultiple : worksizeMax, inverseSize, inverseMultiple, quitCount, outputFile, postUrl);
-
-		for (auto &i : vDevices)
-		{
-			d.addDevice(i, worksizeLocal, mDeviceIndex[i]);
-		}
-
-		d.run();
-		clReleaseContext(clContext);
+		// 这里后续将用CUDA内存分配和内核调用替换
+		// 目前先退出，后续逐步迁移主流程
 		return 0;
 	}
 	catch (std::runtime_error &e)
