@@ -1,4 +1,4 @@
-#include <algorithm>
+THIS SHOULD BE A LINTER ERROR#include <algorithm>
 #include <stdexcept>
 #include <iostream>
 #include <fstream>
